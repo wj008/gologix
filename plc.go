@@ -306,8 +306,9 @@ func (p *PLC) writePack(pack *enip.Package) (reply *enip.Package, err error) {
 		timeout.Close()
 		p.Close()
 	}
-	p.PrintPackage("--------writePack------------", pack)
+
 	buffer := pack.Buffer()
+	p.PrintPackage("--------writePack------------", pack)
 	if _, err = p.Write(buffer); err != nil {
 		errorCall()
 		return
@@ -574,9 +575,30 @@ func (p *PLC) ReadTag(tagName string, elements uint16) (*TagResult, error) {
 
 func (p *PLC) MultiReadTag(tagList []string) (map[string]*TagValue, error) {
 	p.Println("MultiReadTag", tagList)
+	listLen := len(tagList)
+	if listLen == 0 {
+		return nil, errors.New("发送的数据为空")
+	}
+	if listLen == 1 {
+		tagName := tagList[0]
+		result, err2 := p.ReadTag(tagName, 1)
+		if err2 != nil {
+			return nil, err2
+		}
+		values := make(map[string]*TagValue)
+		tagValue := &TagValue{}
+		tagValue.Value = result.Values[0]
+		tagValue.Status = result.Status
+		tagValue.DType = result.DType
+		values[tagName] = tagValue
+		return values, nil
+	}
+
 	serviceSegments := make([][]byte, 0)
-	tagCount := len(tagList)
 	header := enip.BuildMultiServiceHeader()
+	tagCount := 0
+	hLen := len(header)
+	dataLen := hLen + 2
 	for _, tagName := range tagList {
 		baseTag, _ := lib.ParseTagName(tagName)
 		dataType, err := p.ReadPartialTag(baseTag)
@@ -585,25 +607,32 @@ func (p *PLC) MultiReadTag(tagList []string) (map[string]*TagValue, error) {
 		}
 		tagData := enip.BuildTagIOI(tagName, dataType)
 		readRequest := enip.AddReadIOI(tagData, 1)
+		dataLen += len(readRequest) + 2
+		if dataLen > int(p.ConnectionSize) {
+			break
+		}
 		serviceSegments = append(serviceSegments, readRequest)
+		tagCount++
 	}
-	offsets := new(bytes.Buffer)
-	temp := len(header)
-	if tagCount > 2 {
-		temp += (tagCount - 2) * 2
-	}
-	lib.WriteByte(offsets, uint16(temp))
-	for i := 0; i < tagCount-1; i++ {
-		temp += len(serviceSegments[i])
-		lib.WriteByte(offsets, uint16(temp))
+	if tagCount == 0 {
+		return nil, errors.New("发送的数据为空")
 	}
 	buffer := new(bytes.Buffer)
 	buffer.Write(header)
 	lib.WriteByte(buffer, uint16(tagCount))
-	buffer.Write(offsets.Bytes())
-	for _, segment := range serviceSegments {
-		buffer.Write(segment)
+	data := new(bytes.Buffer)
+	offsets := new(bytes.Buffer)
+	temp := hLen
+	if tagCount > 2 {
+		temp += (tagCount - 2) * 2
 	}
+	for _, segment := range serviceSegments {
+		lib.WriteByte(offsets, uint16(temp))
+		data.Write(segment)
+		temp += len(segment)
+	}
+	buffer.Write(offsets.Bytes())
+	buffer.Write(data.Bytes())
 	var pack *enip.Package
 	IsForwardOpened := p.IsForwardOpened
 	if IsForwardOpened {
@@ -617,7 +646,13 @@ func (p *PLC) MultiReadTag(tagList []string) (map[string]*TagValue, error) {
 	}
 	dataItem := reply.DataItems[1]
 	res := enip.ParserResponse(dataItem.Data, IsForwardOpened)
-	values, err := multiParser(res, tagList)
+	p.Println("Sequence", res.Sequence)
+	p.Println("Status", res.Status)
+	p.Println("SizeOfAdditionalStatus", res.SizeOfAdditionalStatus)
+	p.Println("Service", res.Service)
+	p.Println("Reserved", res.Reserved)
+	p.PrintBytes("Data", res.Data)
+	values, err := p.multiParser(res, tagList)
 	return values, err
 }
 
@@ -653,18 +688,19 @@ func (p *PLC) ReadAttributeAll() error {
 }
 
 //MultiParser 解析批量数据
-func multiParser(res *enip.Response, tagList []string) (map[string]*TagValue, error) {
+func (p *PLC) multiParser(res *enip.Response, tagList []string) (map[string]*TagValue, error) {
 	values := make(map[string]*TagValue)
 	dataLen := len(res.Data)
 	if dataLen == 0 {
 		return nil, errors.New("返回内容为空，读取失败")
 	}
+	tagList2 := make([]string, 0)
+	tagCount := (binary.LittleEndian.Uint16(res.Data[0:2]) - 2) / 2
 	for i, tag := range tagList {
 		tagValue := &TagValue{}
 		loc := i * 2
-		if loc+2 > dataLen {
-			tagValue.Value = nil
-			values[tag] = tagValue
+		if loc+2 > dataLen || i >= int(tagCount) {
+			tagList2 = append(tagList2, tag)
 			continue
 		}
 		offset := binary.LittleEndian.Uint16(res.Data[loc : loc+2])
@@ -743,6 +779,15 @@ func multiParser(res *enip.Response, tagList []string) (map[string]*TagValue, er
 			tagValue.Status = 0
 			tagValue.DType = dataType
 			values[tag] = tagValue
+		}
+	}
+	if len(tagList2) > 0 {
+		values2, err4 := p.MultiReadTag(tagList2)
+		if err4 != nil {
+			return nil, err4
+		}
+		for name, value := range values2 {
+			values[name] = value
 		}
 	}
 	return values, nil
