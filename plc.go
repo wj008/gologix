@@ -762,12 +762,13 @@ func (p *PLC) ParseReply(res *enip.Response, tagName string, elements uint16) ([
 		return values, nil
 	} else if lib.IsBitWord(tagName) {
 		bitCount := types.GetByteCount(dataType) * 8
-		wordCount := lib.GetWordCount(uint16(indexs[0]), elements, bitCount)
+		index := uint16(indexs[0]) % bitCount
+		wordCount := lib.GetWordCount(index, elements, bitCount)
 		words, err := p.getReplyValues(res, tagName, wordCount)
 		if err != nil {
 			return nil, err
 		}
-		values := wordsToBits(words, elements, dataType, indexs[0])
+		values := wordsToBits(words, elements, dataType, int(index))
 		return values, nil
 	} else {
 		values, err := p.getReplyValues(res, tagName, elements)
@@ -801,11 +802,10 @@ func (p *PLC) getReplyValues(res *enip.Response, tagName string, elements uint16
 						return values, err3
 					}
 					values = append(values, result.Values...)
-
 				} else if lib.IsBitWord(tagName) {
 					bitCount := types.GetByteCount(dataType) * 8
 					start2 := indexs[0] + i*int(bitCount)
-					tagName2 := baseTag + "[" + strconv.Itoa(start2) + "]"
+					tagName2 := baseTag + "." + strconv.Itoa(start2)
 					result, err3 := p.ReadTag(tagName2, uint16(elements2))
 					if err3 != nil {
 						return values, err3
@@ -839,8 +839,10 @@ func wordsToBits(words []interface{}, elements uint16, dataType types.DataType, 
 	if dataType == types.BIT_STRING {
 		bitPos = index % 32
 	} else {
-		bitPos = index
+		bitCount := types.GetByteCount(dataType) * 8
+		bitPos = index % int(bitCount)
 	}
+
 	ret := make([]interface{}, 0)
 	for _, word := range words {
 		switch word.(type) {

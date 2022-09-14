@@ -7,6 +7,7 @@ import (
 	"github.com/wj008/gologix/lib"
 	"github.com/wj008/gologix/types"
 	"math"
+	"strconv"
 	"strings"
 )
 
@@ -187,6 +188,20 @@ func BuildTagIOI(tagName string, dataType types.DataType) []byte {
 			buffer.Write([]byte(tag))
 			if BaseTagLen%2 != 0 {
 				lib.WriteByte(buffer, uint8(0x00))
+			}
+		} else if lib.IsInteger(tag) && i == 1 && len(tagArray) == 2 {
+			index, _ := strconv.Atoi(tag)
+			bitCount := types.GetByteCount(dataType) * 8
+			index = index / int(bitCount)
+			if index < 256 {
+				lib.WriteByte(buffer, uint8(0x28))
+				lib.WriteByte(buffer, uint8(index))
+			} else if index >= 256 && index < 65536 {
+				lib.WriteByte(buffer, uint16(0x29))
+				lib.WriteByte(buffer, uint16(index))
+			} else {
+				lib.WriteByte(buffer, uint16(0x2a))
+				lib.WriteByte(buffer, uint32(index))
 			}
 		}
 	}
