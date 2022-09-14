@@ -276,7 +276,7 @@ func (p *PLC) writePack(pack *enip.Package) (reply *enip.Package, err error) {
 	if pack.Command == enip.CommandSendUnitData && !p.IsRegistered {
 		return nil, errors.New("还没有注册链接")
 	}
-	timeout := enip.NewTimeOut(30 * time.Second)
+	timeout := enip.NewTimeOut(10 * time.Second)
 	callback := func(reply *enip.Package) {
 		timeout.Write(reply)
 	}
