@@ -558,7 +558,7 @@ func (p *PLC) ReadTag(tagName string, elements uint16) (*TagResult, error) {
 
 	res := enip.ParserResponse(dataItem.Data, IsForwardOpened)
 	if res.Status != 0 && res.Status != 6 {
-		log.Println("res.Status", res.Status)
+		p.Println("res.Status", res.Status)
 		return nil, errors.New("状态不正确")
 	}
 	values, err := p.ParseReply(res, tagName, elements)
