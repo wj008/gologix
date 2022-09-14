@@ -761,8 +761,8 @@ func (p *PLC) ParseReply(res *enip.Response, tagName string, elements uint16) ([
 		values := wordsToBits(words, elements, dataType, indexs[0])
 		return values, nil
 	} else if lib.IsBitWord(tagName) {
-		bitCount := types.GetByteCount(dataType)
-		wordCount := lib.GetWordCount(uint16(indexs[0]), elements, bitCount*8)
+		bitCount := types.GetByteCount(dataType) * 8
+		wordCount := lib.GetWordCount(uint16(indexs[0]), elements, bitCount)
 		words, err := p.getReplyValues(res, tagName, wordCount)
 		if err != nil {
 			return nil, err
@@ -803,8 +803,8 @@ func (p *PLC) getReplyValues(res *enip.Response, tagName string, elements uint16
 					values = append(values, result.Values...)
 
 				} else if lib.IsBitWord(tagName) {
-					bitCount := types.GetByteCount(dataType)
-					start2 := indexs[0] + i*int(bitCount*8)
+					bitCount := types.GetByteCount(dataType) * 8
+					start2 := indexs[0] + i*int(bitCount)
 					tagName2 := baseTag + "[" + strconv.Itoa(start2) + "]"
 					result, err3 := p.ReadTag(tagName2, uint16(elements2))
 					if err3 != nil {
