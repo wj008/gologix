@@ -646,12 +646,6 @@ func (p *PLC) MultiReadTag(tagList []string) (map[string]*TagValue, error) {
 	}
 	dataItem := reply.DataItems[1]
 	res := enip.ParserResponse(dataItem.Data, IsForwardOpened)
-	p.Println("Sequence", res.Sequence)
-	p.Println("Status", res.Status)
-	p.Println("SizeOfAdditionalStatus", res.SizeOfAdditionalStatus)
-	p.Println("Service", res.Service)
-	p.Println("Reserved", res.Reserved)
-	p.PrintBytes("Data", res.Data)
 	values, err := p.multiParser(res, tagList)
 	return values, err
 }
