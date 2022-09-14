@@ -12,6 +12,7 @@ import (
 	"log"
 	"math/rand"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -554,11 +555,16 @@ func (p *PLC) ReadTag(tagName string, elements uint16) (*TagResult, error) {
 		return nil, err
 	}
 	dataItem := reply.DataItems[1]
+
 	res := enip.ParserResponse(dataItem.Data, IsForwardOpened)
 	if res.Status != 0 && res.Status != 6 {
+		log.Println("res.Status", res.Status)
 		return nil, errors.New("状态不正确")
 	}
-	values, err := enip.ParseReply(res, tagName, elements)
+	values, err := p.ParseReply(res, tagName, elements)
+	if err != nil {
+		return nil, err
+	}
 	result := &TagResult{}
 	result.Status = res.Status
 	result.DType = res.DType
@@ -740,4 +746,190 @@ func multiParser(res *enip.Response, tagList []string) (map[string]*TagValue, er
 		}
 	}
 	return values, nil
+}
+
+//ParseReply 解析数据
+func (p *PLC) ParseReply(res *enip.Response, tagName string, elements uint16) ([]interface{}, error) {
+	_, indexs := lib.ParseTagName(tagName)
+	dataType := res.DType
+	if dataType == types.BIT_STRING {
+		wordCount := lib.GetWordCount(uint16(indexs[0]), elements, 32)
+		words, err := p.getReplyValues(res, tagName, wordCount)
+		if err != nil {
+			return nil, err
+		}
+		values := wordsToBits(words, elements, dataType, indexs[0])
+		return values, nil
+	} else if lib.IsBitWord(tagName) {
+		bitCount := types.GetByteCount(dataType)
+		wordCount := lib.GetWordCount(uint16(indexs[0]), elements, bitCount*8)
+		words, err := p.getReplyValues(res, tagName, wordCount)
+		if err != nil {
+			return nil, err
+		}
+		values := wordsToBits(words, elements, dataType, indexs[0])
+		return values, nil
+	} else {
+		values, err := p.getReplyValues(res, tagName, elements)
+		if err != nil {
+			return nil, err
+		}
+		return values, nil
+	}
+}
+
+//getReplyValues 获取所有数值
+func (p *PLC) getReplyValues(res *enip.Response, tagName string, elements uint16) ([]interface{}, error) {
+	dataType := res.DType
+	reader := bytes.NewReader(res.Data)
+	if reader.Len() == 0 {
+		return nil, errors.New("返回内容为空，读取失败")
+	}
+	values := make([]interface{}, 0)
+	offset := uint32(0)
+	count := int(elements)
+	for i := 0; i < count; i++ {
+		if reader.Len() == 0 {
+			elements2 := count - i
+			if elements2 > 0 {
+				baseTag, indexs := lib.ParseTagName(tagName)
+				if dataType == types.BIT_STRING {
+					start2 := indexs[0] + i*32
+					tagName2 := baseTag + "[" + strconv.Itoa(start2) + "]"
+					result, err3 := p.ReadTag(tagName2, uint16(elements2))
+					if err3 != nil {
+						return values, err3
+					}
+					values = append(values, result.Values...)
+
+				} else if lib.IsBitWord(tagName) {
+					bitCount := types.GetByteCount(dataType)
+					start2 := indexs[0] + i*int(bitCount*8)
+					tagName2 := baseTag + "[" + strconv.Itoa(start2) + "]"
+					result, err3 := p.ReadTag(tagName2, uint16(elements2))
+					if err3 != nil {
+						return values, err3
+					}
+					values = append(values, result.Values...)
+				} else {
+					start2 := indexs[0] + i
+					tagName2 := baseTag + "[" + strconv.Itoa(start2) + "]"
+					result, err3 := p.ReadTag(tagName2, uint16(elements2))
+					if err3 != nil {
+						return values, err3
+					}
+					values = append(values, result.Values...)
+				}
+			}
+			return values, nil
+		}
+		result, pos, err2 := types.GetTypeValue(reader, dataType)
+		if err2 != nil {
+			return nil, err2
+		}
+		values = append(values, result)
+		offset += pos
+	}
+	return values, nil
+}
+
+//wordsToBits 字节转位
+func wordsToBits(words []interface{}, elements uint16, dataType types.DataType, index int) []interface{} {
+	bitPos := 0
+	if dataType == types.BIT_STRING {
+		bitPos = index % 32
+	} else {
+		bitPos = index
+	}
+	ret := make([]interface{}, 0)
+	for _, word := range words {
+		switch word.(type) {
+		case uint8:
+			for i := uint8(0); i < 8; i++ {
+				val := (word.(uint8) & (1 << i)) > 0
+				ret = append(ret, val)
+			}
+			break
+		case uint16:
+			for i := uint16(0); i < 16; i++ {
+				val := (word.(uint16) & (1 << i)) > 0
+				ret = append(ret, val)
+			}
+			break
+		case uint32:
+			for i := uint32(0); i < 32; i++ {
+				val := (word.(uint32) & (1 << i)) > 0
+				ret = append(ret, val)
+			}
+			break
+		case uint64:
+			for i := uint64(0); i < 64; i++ {
+				val := (word.(uint64) & (1 << i)) > 0
+				ret = append(ret, val)
+			}
+			break
+		case int8:
+			buffer := new(bytes.Buffer)
+			lib.WriteByte(buffer, word)
+			var newWord uint8
+			lib.ReadByte(buffer, &newWord)
+			for i := uint8(0); i < 8; i++ {
+				val := (newWord & (1 << i)) > 0
+				ret = append(ret, val)
+			}
+			break
+		case int16:
+			buffer := new(bytes.Buffer)
+			lib.WriteByte(buffer, word)
+			var newWord uint16
+			lib.ReadByte(buffer, &newWord)
+			for i := uint16(0); i < 16; i++ {
+				val := (newWord & (1 << i)) > 0
+				ret = append(ret, val)
+			}
+			break
+		case int32:
+			buffer := new(bytes.Buffer)
+			lib.WriteByte(buffer, word)
+			var newWord uint32
+			lib.ReadByte(buffer, &newWord)
+			for i := uint32(0); i < 32; i++ {
+				val := (newWord & (1 << i)) > 0
+				ret = append(ret, val)
+			}
+			break
+		case int64:
+			buffer := new(bytes.Buffer)
+			lib.WriteByte(buffer, word)
+			var newWord uint64
+			lib.ReadByte(buffer, &newWord)
+			for i := uint64(0); i < 64; i++ {
+				val := (newWord & (1 << i)) > 0
+				ret = append(ret, val)
+			}
+			break
+		case float32:
+			buffer := new(bytes.Buffer)
+			lib.WriteByte(buffer, word)
+			var newWord uint32
+			lib.ReadByte(buffer, &newWord)
+			for i := uint32(0); i < 64; i++ {
+				val := (newWord & (1 << i)) > 0
+				ret = append(ret, val)
+			}
+			break
+		case float64:
+			buffer := new(bytes.Buffer)
+			lib.WriteByte(buffer, word)
+			var newWord uint64
+			lib.ReadByte(buffer, &newWord)
+			for i := uint64(0); i < 64; i++ {
+				val := (newWord & (1 << i)) > 0
+				ret = append(ret, val)
+			}
+			break
+		}
+	}
+	ret = ret[bitPos : bitPos+int(elements)]
+	return ret
 }
