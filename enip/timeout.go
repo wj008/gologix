@@ -18,13 +18,11 @@ func NewTimeOut(timeOut time.Duration) *TimeOut {
 }
 
 func (t *TimeOut) Read() (*Package, error) {
-	for {
-		select {
-		case pack := <-t.ch:
-			return pack, nil
-		case <-time.After(t.timeOut):
-			return nil, errors.New("超时读取数据")
-		}
+	select {
+	case pack := <-t.ch:
+		return pack, nil
+	case <-time.After(t.timeOut):
+		return nil, errors.New("超时读取数据")
 	}
 }
 
